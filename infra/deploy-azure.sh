@@ -11,7 +11,7 @@ set -euo pipefail
 
 RG=${RG:-rg-milscale}
 LOC=${LOC:-eastus2}
-SQL_REGIOES=${SQL_REGIOES:-"northcentralus southcentralus mexicocentral chilecentral"}
+SQL_REGIOES=${SQL_REGIOES:-"southcentralus mexicocentral chilecentral northcentralus"}
 SUFIXO=${SUFIXO:-enzo}
 DH=${DOCKERHUB_USER:-enzowlima}
 TAG=${TAG:-v1}
@@ -19,7 +19,6 @@ TAG=${TAG:-v1}
 SB=sb-milscale-$SUFIXO
 FILA=escala-eventos
 ST=stmilscale$SUFIXO
-SQLSRV=${SQLSRV:-sql-milscale-$SUFIXO-db}
 SQLDB=milscale_escala
 SQLUSER=milscaleadmin
 FUNC=func-milscale-$SUFIXO
@@ -44,16 +43,22 @@ existe az servicebus queue show -g "$RG" --namespace-name "$SB" -n "$FILA" || az
 SB_CONN=$(az servicebus namespace authorization-rule keys list -g "$RG" --namespace-name "$SB" \
   -n RootManageSharedAccessKey --query primaryConnectionString -o tsv 2>/dev/null)
 
-etapa "Azure SQL ($SQLSRV / $SQLDB)"
-if ! existe az sql server show -g "$RG" -n "$SQLSRV"; then
+etapa "Azure SQL ($SQLDB)"
+# Reaproveita um servidor SQL ja criado no grupo; senao tenta as regioes permitidas.
+EXISTENTE=$(az sql server list -g "$RG" --query "[?state=='Ready'].name | [0]" -o tsv 2>/dev/null || true)
+if [ -n "$EXISTENTE" ]; then
+  SQLSRV=$EXISTENTE
+else
+  SQLSRV=""
   for regiao in $SQL_REGIOES; do
-    echo "Tentando criar o SQL Server em $regiao..."
-    if az sql server create -g "$RG" -n "$SQLSRV" -l "$regiao" -u "$SQLUSER" -p "$SQL_PASS" -o none 2>/tmp/sql.err; then
-      echo "SQL Server criado em $regiao"; break
+    nome="sql-milscale-$SUFIXO-$regiao"
+    echo "Tentando criar o SQL Server $nome..."
+    if az sql server create -g "$RG" -n "$nome" -l "$regiao" -u "$SQLUSER" -p "$SQL_PASS" -o none 2>/tmp/sql.err; then
+      SQLSRV=$nome; echo "SQL Server criado em $regiao"; break
     fi
-    grep -qE "RegionDoesNotAllowProvisioning|RequestDisallowedByAzure" /tmp/sql.err || { cat /tmp/sql.err; exit 1; }
+    head -c 300 /tmp/sql.err; echo
   done
-  existe az sql server show -g "$RG" -n "$SQLSRV" || { echo "Nenhuma regiao aceitou o SQL Server"; exit 1; }
+  [ -n "$SQLSRV" ] || { echo "Nenhuma regiao aceitou o SQL Server"; exit 1; }
 fi
 az sql server firewall-rule create -g "$RG" -s "$SQLSRV" -n AllowAzureServices \
   --start-ip-address 0.0.0.0 --end-ip-address 0.0.0.0 -o none
