@@ -11,6 +11,7 @@ set -euo pipefail
 
 RG=${RG:-rg-milscale}
 LOC=${LOC:-eastus2}
+SQL_REGIOES=${SQL_REGIOES:-"centralus eastus westus2 westus3 brazilsouth northcentralus southcentralus canadacentral"}
 SUFIXO=${SUFIXO:-enzo}
 DH=${DOCKERHUB_USER:-enzowlima}
 TAG=${TAG:-v1}
@@ -25,6 +26,7 @@ FUNC=func-milscale-$SUFIXO
 ENV=cae-milscale
 
 etapa() { echo; echo "==> $1"; }
+existe() { "$@" -o none >/dev/null 2>&1; }
 
 read -rsp "Senha para o admin do Azure SQL (min. 8, letras, numeros e simbolo, sem ; ): " SQL_PASS; echo
 read -rsp "Connection string do MongoDB Atlas (mongodb+srv://...): " MONGO_URI; echo
@@ -37,16 +39,26 @@ done
 az extension add -n containerapp --upgrade -y -o none 2>/dev/null || true
 
 etapa "Service Bus ($SB / fila $FILA)"
-az servicebus namespace create -g "$RG" -n "$SB" -l "$LOC" --sku Basic -o none
-az servicebus queue create -g "$RG" --namespace-name "$SB" -n "$FILA" -o none
+existe az servicebus namespace show -g "$RG" -n "$SB" || az servicebus namespace create -g "$RG" -n "$SB" -l "$LOC" --sku Basic -o none
+existe az servicebus queue show -g "$RG" --namespace-name "$SB" -n "$FILA" || az servicebus queue create -g "$RG" --namespace-name "$SB" -n "$FILA" -o none
 SB_CONN=$(az servicebus namespace authorization-rule keys list -g "$RG" --namespace-name "$SB" \
-  -n RootManageSharedAccessKey --query primaryConnectionString -o tsv)
+  -n RootManageSharedAccessKey --query primaryConnectionString -o tsv 2>/dev/null)
 
 etapa "Azure SQL ($SQLSRV / $SQLDB)"
-az sql server create -g "$RG" -n "$SQLSRV" -l "$LOC" -u "$SQLUSER" -p "$SQL_PASS" -o none
+if ! existe az sql server show -g "$RG" -n "$SQLSRV"; then
+  for regiao in $SQL_REGIOES; do
+    echo "Tentando criar o SQL Server em $regiao..."
+    if az sql server create -g "$RG" -n "$SQLSRV" -l "$regiao" -u "$SQLUSER" -p "$SQL_PASS" -o none 2>/tmp/sql.err; then
+      echo "SQL Server criado em $regiao"; break
+    fi
+    grep -q RegionDoesNotAllowProvisioning /tmp/sql.err || { cat /tmp/sql.err; exit 1; }
+  done
+  existe az sql server show -g "$RG" -n "$SQLSRV" || { echo "Nenhuma regiao aceitou o SQL Server"; exit 1; }
+fi
 az sql server firewall-rule create -g "$RG" -s "$SQLSRV" -n AllowAzureServices \
   --start-ip-address 0.0.0.0 --end-ip-address 0.0.0.0 -o none
-if ! az sql db create -g "$RG" -s "$SQLSRV" -n "$SQLDB" -e GeneralPurpose -f Gen5 -c 2 \
+if existe az sql db show -g "$RG" -s "$SQLSRV" -n "$SQLDB"; then echo "Banco ja existe"
+elif ! az sql db create -g "$RG" -s "$SQLSRV" -n "$SQLDB" -e GeneralPurpose -f Gen5 -c 2 \
      --compute-model Serverless --use-free-limit --free-limit-exhaustion-behavior AutoPause -o none; then
   echo "Oferta gratuita indisponivel, criando no plano Basic"
   az sql db create -g "$RG" -s "$SQLSRV" -n "$SQLDB" -e Basic -o none
@@ -54,8 +66,8 @@ fi
 SQL_CONN="Server=tcp:$SQLSRV.database.windows.net,1433;Database=$SQLDB;User Id=$SQLUSER;Password=$SQL_PASS;Encrypt=true;TrustServerCertificate=false;Connection Timeout=60"
 
 etapa "Azure Function ($FUNC)"
-az storage account create -g "$RG" -n "$ST" -l "$LOC" --sku Standard_LRS -o none
-az functionapp create -g "$RG" -n "$FUNC" -s "$ST" --flexconsumption-location "$LOC" \
+existe az storage account show -g "$RG" -n "$ST" || az storage account create -g "$RG" -n "$ST" -l "$LOC" --sku Standard_LRS -o none
+existe az functionapp show -g "$RG" -n "$FUNC" || az functionapp create -g "$RG" -n "$FUNC" -s "$ST" --flexconsumption-location "$LOC" \
   --runtime node --runtime-version 22 -o none
 az functionapp config appsettings set -g "$RG" -n "$FUNC" -o none \
   --settings "ServiceBusConnection=$SB_CONN" "SERVICEBUS_QUEUE=$FILA"
@@ -67,10 +79,13 @@ az functionapp deployment source config-zip -g "$RG" -n "$FUNC" --src /tmp/funct
 FUNC_URL="https://$(az functionapp show -g "$RG" -n "$FUNC" --query defaultHostName -o tsv)"
 
 etapa "Container Apps ($ENV)"
-az containerapp env create -g "$RG" -n "$ENV" -l "$LOC" -o none
+existe az containerapp env show -g "$RG" -n "$ENV" || az containerapp env create -g "$RG" -n "$ENV" -l "$LOC" -o none
 
 criar_app() { # nome imagem porta -- argumentos extras
   local nome=$1 imagem=$2 porta=$3; shift 3
+  if existe az containerapp show -g "$RG" -n "$nome"; then
+    az containerapp delete -g "$RG" -n "$nome" --yes -o none
+  fi
   az containerapp create -g "$RG" -n "$nome" --environment "$ENV" \
     --image "docker.io/$DH/$imagem:$TAG" --target-port "$porta" --ingress external \
     --min-replicas 1 --max-replicas 2 --cpu 0.25 --memory 0.5Gi "$@" \
