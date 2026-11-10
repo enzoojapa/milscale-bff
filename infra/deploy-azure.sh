@@ -93,7 +93,7 @@ criar_app() { # nome imagem porta -- argumentos extras
   fi
   az containerapp create -g "$RG" -n "$nome" --environment "$ENV" \
     --image "docker.io/$DH/$imagem:$TAG" --target-port "$porta" --ingress external \
-    --min-replicas 1 --max-replicas 2 --cpu 0.25 --memory 0.5Gi "$@" \
+    --min-replicas 0 --max-replicas 1 --cpu 0.25 --memory 0.5Gi "$@" \
     --query properties.configuration.ingress.fqdn -o tsv
 }
 
