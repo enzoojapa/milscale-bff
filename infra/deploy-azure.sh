@@ -81,7 +81,7 @@ git clone -q https://github.com/enzoojapa/milscale-function /tmp/milscale-functi
 (cd /tmp/milscale-function && npm ci --silent && npm run build --silent && npm prune --omit=dev --silent \
   && zip -qr /tmp/function.zip dist node_modules host.json package.json)
 az functionapp deployment source config-zip -g "$RG" -n "$FUNC" --src /tmp/function.zip -o none
-FUNC_URL="https://$(az functionapp show -g "$RG" -n "$FUNC" --query defaultHostName -o tsv)"
+FUNC_URL="https://$(az functionapp show -g "$RG" -n "$FUNC" --query "properties.defaultHostName || hostNames[0]" -o tsv)"
 
 etapa "Container Apps ($ENV)"
 existe az containerapp env show -g "$RG" -n "$ENV" || az containerapp env create -g "$RG" -n "$ENV" -l "$LOC" -o none
