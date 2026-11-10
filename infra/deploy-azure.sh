@@ -11,7 +11,7 @@ set -euo pipefail
 
 RG=${RG:-rg-milscale}
 LOC=${LOC:-eastus2}
-SQL_REGIOES=${SQL_REGIOES:-"centralus eastus westus2 westus3 brazilsouth northcentralus southcentralus canadacentral"}
+SQL_REGIOES=${SQL_REGIOES:-"northcentralus southcentralus mexicocentral chilecentral"}
 SUFIXO=${SUFIXO:-enzo}
 DH=${DOCKERHUB_USER:-enzowlima}
 TAG=${TAG:-v1}
@@ -51,7 +51,7 @@ if ! existe az sql server show -g "$RG" -n "$SQLSRV"; then
     if az sql server create -g "$RG" -n "$SQLSRV" -l "$regiao" -u "$SQLUSER" -p "$SQL_PASS" -o none 2>/tmp/sql.err; then
       echo "SQL Server criado em $regiao"; break
     fi
-    grep -q RegionDoesNotAllowProvisioning /tmp/sql.err || { cat /tmp/sql.err; exit 1; }
+    grep -qE "RegionDoesNotAllowProvisioning|RequestDisallowedByAzure" /tmp/sql.err || { cat /tmp/sql.err; exit 1; }
   done
   existe az sql server show -g "$RG" -n "$SQLSRV" || { echo "Nenhuma regiao aceitou o SQL Server"; exit 1; }
 fi
