@@ -58,15 +58,15 @@ npm test
 ```
 
 ```bash
-docker build -t enzoojapa/milscale-bff:v1 .
-docker run -p 3000:3000 -e EFETIVO_SERVICE_URL=... -e ESCALA_SERVICE_URL=... -e FUNCTION_URL=... enzoojapa/milscale-bff:v1
+docker build -t enzowlima/milscale-bff:v1 .
+docker run -p 3000:3000 -e EFETIVO_SERVICE_URL=... -e ESCALA_SERVICE_URL=... -e FUNCTION_URL=... enzowlima/milscale-bff:v1
 ```
 
 ## Links
 
-- Swagger: _LINK_SWAGGER_
-- API Gateway: _LINK_GATEWAY_
-- Docker Hub: _LINK_DOCKER_
+- Swagger: https://ca-milscale-bff.ashyforest-fcfffbba.eastus2.azurecontainerapps.io/swagger
+- API Gateway: https://2r51s1kurb.execute-api.us-east-1.amazonaws.com/aggregated-data
+- Docker Hub: https://hub.docker.com/r/enzowlima/milscale-bff
 
 ## Projetos do sistema
 
