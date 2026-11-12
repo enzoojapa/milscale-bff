@@ -1,88 +1,31 @@
-# MilScale - BFF (Backend for Frontend)
+# MilScale - BFF
 
-Backend for Frontend em Node.js. É a única porta de entrada do frontend (atrás do API Gateway): o frontend nunca chama os microsserviços diretamente.
+Esse é o BFF (Backend for Frontend) do MilScale, o sistema que a gente fez pra montar a escala de serviço de 24h de uma organização militar, que hoje é feita em planilha. O frontend nunca fala direto com os microsserviços, tudo passa por aqui, e na frente do BFF fica o API Gateway da AWS.
 
-Responsabilidades:
+A rota principal é o `GET /aggregated-data`. Ela busca o efetivo no microsserviço do MongoDB e a escala do dia no microsserviço do Azure SQL ao mesmo tempo, depois manda a quantidade de militares aptos pra Azure Function calcular o ciclo de serviço, e devolve tudo junto em um JSON só. Cada parte da resposta tem o seu próprio status, então se um serviço cair o painel continua mostrando o resto em vez de dar erro na tela inteira. Além disso o BFF faz o proxy do CRUD: o que chega em `/api/militares` vai pro serviço de efetivo e o que chega em `/api/escalas`, `/api/trocas` e `/api/eventos` vai pro serviço de escalas.
 
-- **Agregação**: `GET /aggregated-data` consulta o microsserviço de efetivo (MongoDB), o de escalas (Azure SQL) e a Azure Function, e devolve tudo em um único JSON.
-- **Proxy do CRUD**: `/api/militares`, `/api/escalas`, `/api/trocas`, `/api/eventos` e `/api/ciclo` são repassados ao serviço correspondente.
+O código segue Clean Architecture com Vertical Slice. Em `src/domain` ficam os modelos do painel, em `src/application` o caso de uso de agregação e as interfaces dos clientes, em `src/infrastructure` os clientes HTTP e o proxy, e em `src/api` as rotas, o Swagger e a montagem das dependências. Os testes unitários cobrem a agregação, a falha parcial e o proxy, e os testes de arquitetura garantem que uma camada não importa a outra no sentido errado e que o BFF não acessa banco nenhum direto.
 
-## GET /aggregated-data
+Foi feito em Node.js 22 com TypeScript e Express 5, com Swagger UI pra documentação, Jest e Supertest nos testes e Docker pra imagem.
 
-1. Busca o efetivo e a escala do dia em paralelo.
-2. Com o número de aptos, chama a Function para calcular o ciclo.
-3. Responde com os blocos `efetivo`, `escala` e `ciclo`. Cada bloco informa se a fonte respondeu, então uma falha parcial não derruba a tela.
-
-```json
-{
-  "data": "2026-11-20",
-  "tempoMs": 412,
-  "efetivo": { "status": "ok", "dados": { "total": 12, "aptos": 10, "militares": [] } },
-  "escala":  { "status": "ok", "dados": { "total": 4, "escalas": [] } },
-  "ciclo":   { "status": "ok", "dados": { "cicloDias": 2, "folgaEntreServicosDias": 1 } }
-}
-```
-
-## Arquitetura
-
-```
-Usuário -> Microfrontend (React) -> API Gateway (AWS) -> BFF (Node.js)
-                                                         |-> Efetivo Service -> MongoDB Atlas
-                                                         |-> Escala Service  -> Azure SQL
-                                                         |                   -> Azure Service Bus -> Function (notificar-escala)
-                                                         |-> Azure Function (calcular-ciclo)
-```
-
-```
-src/
-  domain/            modelos do painel
-  application/       get-aggregated-data e portas dos gateways
-  infrastructure/    clientes HTTP dos serviços e proxy
-  api/               rotas, Swagger e composição
-tests/
-  unit/              agregação, falha parcial e proxy
-  architecture/      camadas, slices e proibição de acesso direto a banco
-```
-
-## Tecnologias
-
-Node.js 22, TypeScript, Express 5, Fetch API, Swagger UI, Jest, Supertest, Docker.
-
-## Como rodar localmente
+Pra rodar na máquina é só instalar as dependências, copiar o `.env.example` pra `.env` com as URLs dos serviços e da Function e subir:
 
 ```bash
 npm install
-cp .env.example .env   # URLs dos serviços e da Function
-npm run dev            # http://localhost:3000/swagger
+cp .env.example .env
+npm run dev
 npm test
 ```
 
+A imagem está no Docker Hub e foi gerada com:
+
 ```bash
 docker build -t enzowlima/milscale-bff:v1 .
-docker run -p 3000:3000 -e EFETIVO_SERVICE_URL=... -e ESCALA_SERVICE_URL=... -e FUNCTION_URL=... enzowlima/milscale-bff:v1
+docker push enzowlima/milscale-bff:v1
 ```
 
-## Links
+Na nuvem o BFF roda no Azure Container Apps. O Swagger fica em https://ca-milscale-bff.ashyforest-fcfffbba.eastus2.azurecontainerapps.io/swagger, o endpoint agregado pelo gateway em https://2r51s1kurb.execute-api.us-east-1.amazonaws.com/aggregated-data e a imagem em https://hub.docker.com/r/enzowlima/milscale-bff.
 
-- Swagger: https://ca-milscale-bff.ashyforest-fcfffbba.eastus2.azurecontainerapps.io/swagger
-- API Gateway: https://2r51s1kurb.execute-api.us-east-1.amazonaws.com/aggregated-data
-- Docker Hub: https://hub.docker.com/r/enzowlima/milscale-bff
+Os outros repositórios do projeto são o frontend (https://github.com/enzoojapa/milscale-frontend), o serviço de efetivo (https://github.com/enzoojapa/milscale-efetivo-service), o serviço de escalas (https://github.com/enzoojapa/milscale-escala-service) e a Function (https://github.com/enzoojapa/milscale-function).
 
-## Projetos do sistema
-
-| Componente | Repositório |
-|---|---|
-| Microfrontend (React) | [milscale-frontend](https://github.com/enzoojapa/milscale-frontend) |
-| BFF (Node.js) | [milscale-bff](https://github.com/enzoojapa/milscale-bff) |
-| Microsserviço de efetivo (MongoDB) | [milscale-efetivo-service](https://github.com/enzoojapa/milscale-efetivo-service) |
-| Microsserviço de escalas (Azure SQL) | [milscale-escala-service](https://github.com/enzoojapa/milscale-escala-service) |
-| Azure Function | [milscale-function](https://github.com/enzoojapa/milscale-function) |
-
-## Alunos
-
-- Enzo Watanabe de Lima
-- João Guilherme Salomão
-- João Guilherme Cordeiro
-- Rafael Zeni Simião
-
-PUCPR - Engenharia de Software - Arquitetura e Soluções Cloud (2026/2)
+Trabalho feito por Enzo Watanabe de Lima, João Guilherme Salomão, João Guilherme Cordeiro e Rafael Zeni Simião, para a disciplina de Arquitetura e Soluções Cloud da PUCPR (2026/2).
